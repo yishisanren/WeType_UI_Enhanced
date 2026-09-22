@@ -54,6 +54,7 @@ private const val WETYPE_SETTING_VIEW_PACKAGE_PREFIX =
 private val WETYPE_TRANSPARENT_OVERLAY_CLASS_NAMES = setOf(
     "com.tencent.wetype.plugin.hld.keyboard.selfdraw.S11EmojiKeyboard",
     "com.tencent.wetype.plugin.hld.keyboard.S15CustomPhraseAndClipboardKeyboard",
+    "com.tencent.wetype.plugin.hld.keyboard.S29ClipboardCleanRecordKeyboard",
     "com.tencent.wetype.plugin.hld.keyboard.S34ClipboardBombKeyboard",
     "com.tencent.wetype.plugin.hld.keyboard.S35RequestAIKeyboard"
 )
@@ -393,11 +394,17 @@ internal object WeTypeWindowHooks {
             return
         }
         val visibleOverlayRoots = synchronized(overlayStateLock) {
+            val originals = coveredUnderlayOriginalVisibilities[container]
             overlayRootsByContainer[container]
                 ?.keys
                 ?.filter { root ->
+                    // A lower overlay remains host-visible while we hide it below a modal.
+                    // Keep tracking it so closing the modal restores only that overlay.
+                    val hiddenByModule = root.visibility == View.INVISIBLE &&
+                        originals?.get(root) == View.VISIBLE &&
+                        (root.parent as? View)?.isShown == true
                     root.isAttachedToWindow &&
-                        root.isShown &&
+                        (root.isShown || hiddenByModule) &&
                         isDescendantOf(root, container)
                 }
                 .orEmpty()
@@ -456,20 +463,37 @@ internal object WeTypeWindowHooks {
         container: ViewGroup,
         visibleOverlayRoots: Set<View>
     ) {
-        val coveredUnderlays = findCoveredUnderlays(container)
+        val coveredUnderlays = findCoveredUnderlays(container).filter { underlay ->
+            visibleOverlayRoots.any { overlay ->
+                isWeTypeViewBehindOverlay<View>(
+                    underlay, overlay, container,
+                    parentOf = { it.parent as? View },
+                    compareSiblings = { parent, first, second ->
+                        // Host keyboard layers are FrameLayouts: Z takes precedence over child order.
+                        val zOrder = first.z.compareTo(second.z)
+                        if (zOrder != 0) zOrder else {
+                            val group = parent as ViewGroup
+                            group.indexOfChild(first).compareTo(group.indexOfChild(second))
+                        }
+                    }
+                )
+            }
+        }.toSet()
         val rootsToRestore = mutableListOf<Pair<View, Int>>()
         val rootsToHide = mutableListOf<View>()
         synchronized(overlayStateLock) {
             val originals = coveredUnderlayOriginalVisibilities
                 .getOrPut(container) { WeakHashMap() }
-            visibleOverlayRoots.forEach { overlayRoot ->
-                originals.remove(overlayRoot)?.let { visibility ->
-                    rootsToRestore += overlayRoot to visibility
+            // A host may reuse/reparent a previously covered keyboard above the active overlay.
+            originals.keys.toList().forEach { root ->
+                if (root !in coveredUnderlays) {
+                    originals.remove(root)?.let { visibility ->
+                        rootsToRestore += root to visibility
+                    }
                 }
             }
             coveredUnderlays.forEach { underlay ->
                 if (
-                    underlay !in visibleOverlayRoots &&
                     underlay.visibility == View.VISIBLE &&
                     underlay.isShown
                 ) {
