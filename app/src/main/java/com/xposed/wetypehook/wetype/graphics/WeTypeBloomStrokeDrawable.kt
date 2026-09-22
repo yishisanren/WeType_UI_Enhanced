@@ -11,6 +11,7 @@ import android.graphics.Path
 import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.graphics.RectF
+import android.graphics.RenderNode
 import android.graphics.drawable.Drawable
 import android.util.TypedValue
 import kotlin.math.abs
@@ -32,7 +33,8 @@ private data class BoxShadow(
 private class RenderedShadow(
     val inset: Boolean,
     val path: Path,
-    val paint: Paint
+    val paint: Paint,
+    val baseColor: Int
 )
 
 /**
@@ -54,18 +56,44 @@ private class RenderedShadow(
 internal class WeTypeBloomStrokeDrawable(
     private val context: Context,
     private val cornerRadii: WeTypeCornerRadii,
-    private val surfaceColor: Int,
-    private val intensityScale: Float = 1f
+    private var surfaceColor: Int,
+    private var intensityScale: Float = 1f
 ) : Drawable() {
     private val contentPath = Path()
     private val renderedShadows = mutableListOf<RenderedShadow>()
+    private var hardwareLayer: RenderNode? = null
 
     private var drawableAlpha = 255
     private var activeColorFilter: ColorFilter? = null
 
     override fun draw(canvas: Canvas) {
-        if (contentPath.isEmpty || renderedShadows.isEmpty()) return
+        if (contentPath.isEmpty || renderedShadows.none { it.paint.alpha != 0 }) return
+        if (!canvas.isHardwareAccelerated) {
+            drawShadows(canvas)
+            return
+        }
+        // Cache the complete four-shadow result at native resolution. A display list
+        // alone still replays every blurred path/clip on each keyboard frame; an HWUI
+        // layer reuses those pixels until bounds, shadow colors or the color filter changes.
+        val layer = hardwareLayer ?: RenderNode("WeType edge highlight").apply {
+            setUseCompositingLayer(true, null)
+        }.also { hardwareLayer = it }
+        if (!layer.hasDisplayList()) {
+            layer.setPosition(bounds.left, bounds.top, bounds.right, bounds.bottom)
+            val recording = layer.beginRecording(bounds.width(), bounds.height())
+            try {
+                recording.translate(-bounds.left.toFloat(), -bounds.top.toFloat())
+                drawShadows(recording)
+            } finally {
+                layer.endRecording()
+            }
+        }
+        canvas.drawRenderNode(layer)
+    }
+
+    private fun drawShadows(canvas: Canvas) {
         renderedShadows.forEach { shadow ->
+            if (shadow.paint.alpha == 0) return@forEach
             val saveCount = canvas.save()
             if (shadow.inset) {
                 canvas.clipPath(contentPath)
@@ -81,13 +109,40 @@ internal class WeTypeBloomStrokeDrawable(
         val clamped = alpha.coerceIn(0, 255)
         if (clamped == drawableAlpha) return
         drawableAlpha = clamped
-        rebuild(bounds)
-        invalidateSelf()
+        updateShadowColors()
+    }
+
+    fun updateStyle(surfaceColor: Int, intensityScale: Float) {
+        if (this.surfaceColor == surfaceColor && this.intensityScale == intensityScale) return
+        this.surfaceColor = surfaceColor
+        this.intensityScale = intensityScale
+        updateShadowColors()
+    }
+
+    private fun shadowAlphaScale(): Float = surfaceAlphaScale(surfaceColor) *
+        (drawableAlpha / 255f) * intensityScale.coerceAtLeast(0f) *
+        if (isDarkMode()) DARK_MODE_ALPHA_SCALE else 1f
+
+    private fun updateShadowColors() {
+        val scale = shadowAlphaScale()
+        var changed = false
+        renderedShadows.forEach { shadow ->
+            val color = scaleColorAlpha(shadow.baseColor, scale)
+            if (shadow.paint.color != color) {
+                shadow.paint.color = color
+                changed = true
+            }
+        }
+        if (changed) {
+            hardwareLayer?.discardDisplayList()
+            invalidateSelf()
+        }
     }
 
     override fun setColorFilter(colorFilter: ColorFilter?) {
         activeColorFilter = colorFilter
         renderedShadows.forEach { it.paint.colorFilter = colorFilter }
+        hardwareLayer?.discardDisplayList()
         invalidateSelf()
     }
 
@@ -100,15 +155,12 @@ internal class WeTypeBloomStrokeDrawable(
     }
 
     private fun rebuild(bounds: Rect) {
+        hardwareLayer?.discardDisplayList()
         contentPath.reset()
         renderedShadows.clear()
         if (bounds.width() <= 0 || bounds.height() <= 0) return
 
-        val alphaScale = surfaceAlphaScale(surfaceColor) *
-            (drawableAlpha / 255f) *
-            intensityScale.coerceAtLeast(0f) *
-            if (isDarkMode()) DARK_MODE_ALPHA_SCALE else 1f
-        if (alphaScale <= 0f) return
+        val alphaScale = shadowAlphaScale()
 
         val contentRect = RectF(bounds).apply { inset(0.5f, 0.5f) }
         if (contentRect.width() <= 0f || contentRect.height() <= 0f) return
@@ -127,7 +179,6 @@ internal class WeTypeBloomStrokeDrawable(
         alphaScale: Float
     ): RenderedShadow? {
         val color = scaleColorAlpha(shadow.color, alphaScale)
-        if (Color.alpha(color) == 0) return null
 
         val offsetX = dp(shadow.offsetX)
         val offsetY = dp(shadow.offsetY)
@@ -150,7 +201,7 @@ internal class WeTypeBloomStrokeDrawable(
             buildOuterShadowPath(contentRect, offsetX, offsetY, spread)
         } ?: return null
 
-        return RenderedShadow(shadow.inset, path, paint)
+        return RenderedShadow(shadow.inset, path, paint, shadow.color)
     }
 
     /**

@@ -10,6 +10,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Outline
+import android.graphics.Path
 import android.net.Uri
 import android.os.Bundle
 import android.view.View
@@ -71,6 +72,7 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.graphics.Color as ComposeColor
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalView
@@ -1400,6 +1402,8 @@ private class HyperMaterialPreviewLayout(context: Context, overrides: GlassMater
     private var isDark = false
     private var cornerRadius = 0
     private var tintColor = Color.TRANSPARENT
+    private var outlineGeometry: Triple<Int, Int, WeTypeCornerRadii>? = null
+    private var outlinePath: Path? = null
 
     init {
         clipChildren = false
@@ -1407,6 +1411,12 @@ private class HyperMaterialPreviewLayout(context: Context, overrides: GlassMater
         // Native siblings give MIUI a local sampling source before the material RenderNode.
         addView(backdrop, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         addView(panel, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        panel.outlineProvider = object : ViewOutlineProvider() {
+            override fun getOutline(view: View, outline: Outline) {
+                outlinePath?.let(outline::setPath)
+            }
+        }
+        panel.clipToOutline = true
     }
 
     fun updateStyle(isDark: Boolean, cornerRadius: Int, tintColor: Int) {
@@ -1432,13 +1442,12 @@ private class HyperMaterialPreviewLayout(context: Context, overrides: GlassMater
         if (!isAttachedToWindow || width <= 0 || height <= 0) return
         val radius = cornerRadius * resources.displayMetrics.density
         val radii = WeTypeCornerRadii(radius, radius, 0f, 0f)
-        panel.outlineProvider = object : ViewOutlineProvider() {
-            override fun getOutline(view: View, outline: Outline) {
-                outline.setPath(createWeTypeContinuousRoundedPath(view.width.toFloat(), view.height.toFloat(), radii))
-            }
+        val geometry = Triple(width, height, radii)
+        if (outlineGeometry != geometry) {
+            outlinePath = createWeTypeContinuousRoundedPath(width.toFloat(), height.toFloat(), radii)
+            outlineGeometry = geometry
+            panel.invalidateOutline()
         }
-        panel.clipToOutline = true
-        panel.invalidateOutline()
         if (material.apply(isDark, tintColor)) material.updateGeometry(radii)
         else panel.setBackgroundColor(WeTypeHyperMaterial.fallbackColor(isDark))
     }
@@ -1462,55 +1471,57 @@ private fun Modifier.weTypePreviewBloom(
 ): Modifier {
     val context = LocalContext.current
     val density = LocalDensity.current
-    val previewContext = remember(context, isDark) {
+    val configuration = LocalConfiguration.current
+    val previewContext = remember(context, configuration, isDark) {
         createPreviewContext(context, isDark)
     }
     val cornerRadiusPx = with(density) { cornerRadius.toPx() }
-    return this.drawWithCache {
-        val previewCornerRadii = WeTypeCornerRadii(
-            topLeft = cornerRadiusPx,
-            topRight = cornerRadiusPx,
-            bottomRight = 0f,
-            bottomLeft = 0f
-        )
-        val widthPx = size.width.roundToInt()
-        val heightPx = size.height.roundToInt()
-        // The bloom overlay relies on clipPath + BlurMaskFilter + Path.op, which are not reliably
-        // supported on Compose's hardware-accelerated recording canvas and crash the preview. Render
-        // it once into an offscreen software bitmap (which supports every operation) and blit the
-        // result, keeping the preview pixel-accurate.
-        val overlayBitmap = if (edgeHighlightEnabled && widthPx > 0 && heightPx > 0) {
-            runCatching {
-                val bloomDrawable = WeTypeBloomStrokeDrawable(
-                    context = previewContext,
-                    cornerRadii = previewCornerRadii,
-                    surfaceColor = color,
-                    intensityScale = edgeHighlightIntensity / 100f
-                )
-                bloomDrawable.setBounds(0, 0, widthPx, heightPx)
-                val clipPath = createWeTypeContinuousRoundedPath(
-                    width = widthPx.toFloat(),
-                    height = heightPx.toFloat(),
-                    cornerRadii = previewCornerRadii
-                )
-                Bitmap.createBitmap(widthPx, heightPx, Bitmap.Config.ARGB_8888).also { bitmap ->
-                    val bitmapCanvas = Canvas(bitmap)
-                    bitmapCanvas.clipPath(clipPath)
-                    bloomDrawable.draw(bitmapCanvas)
-                }
-            }.getOrNull()
-        } else {
-            null
-        }
+    val previewCornerRadii = remember(cornerRadiusPx) {
+        WeTypeCornerRadii(cornerRadiusPx, cornerRadiusPx, 0f, 0f)
+    }
+    // Color/intensity changes reuse the expensive shadow paths and blur filters.
+    val bloomDrawable = remember(previewContext, previewCornerRadii) {
+        WeTypeBloomStrokeDrawable(previewContext, previewCornerRadii, color, edgeHighlightIntensity / 100f)
+    }
+    val bloomModifier = remember(
+        bloomDrawable, color, edgeHighlightEnabled, edgeHighlightIntensity
+    ) {
+        Modifier.drawWithCache {
+            val widthPx = size.width.roundToInt()
+            val heightPx = size.height.roundToInt()
+            // The bloom overlay relies on clipPath + BlurMaskFilter + Path.op, which are not reliably
+            // supported on Compose's hardware-accelerated recording canvas and crash the preview. Render
+            // it once into an offscreen software bitmap (which supports every operation) and blit the
+            // result, keeping the preview pixel-accurate.
+            val overlayBitmap = if (edgeHighlightEnabled && widthPx > 0 && heightPx > 0) {
+                runCatching {
+                    bloomDrawable.updateStyle(color, edgeHighlightIntensity / 100f)
+                    bloomDrawable.setBounds(0, 0, widthPx, heightPx)
+                    val clipPath = createWeTypeContinuousRoundedPath(
+                        width = widthPx.toFloat(),
+                        height = heightPx.toFloat(),
+                        cornerRadii = previewCornerRadii
+                    )
+                    Bitmap.createBitmap(widthPx, heightPx, Bitmap.Config.ARGB_8888).also { bitmap ->
+                        val bitmapCanvas = Canvas(bitmap)
+                        bitmapCanvas.clipPath(clipPath)
+                        bloomDrawable.draw(bitmapCanvas)
+                    }
+                }.getOrNull()
+            } else {
+                null
+            }
 
-        onDrawWithContent {
-            drawContent()
-            val bitmap = overlayBitmap ?: return@onDrawWithContent
-            drawIntoCanvas { canvas ->
-                canvas.nativeCanvas.drawBitmap(bitmap, 0f, 0f, null)
+            onDrawWithContent {
+                drawContent()
+                val bitmap = overlayBitmap ?: return@onDrawWithContent
+                drawIntoCanvas { canvas ->
+                    canvas.nativeCanvas.drawBitmap(bitmap, 0f, 0f, null)
+                }
             }
         }
     }
+    return this.then(bloomModifier)
 }
 
 private fun createPreviewContext(baseContext: Context, isDark: Boolean): Context {

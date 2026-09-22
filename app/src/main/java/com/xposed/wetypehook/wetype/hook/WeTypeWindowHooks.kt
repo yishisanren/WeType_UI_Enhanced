@@ -36,6 +36,7 @@ import com.xposed.wetypehook.wetype.graphics.createWeTypeContinuousRoundedPath
 import com.xposed.wetypehook.wetype.settings.GlassMaterialOverrides
 import com.xposed.wetypehook.wetype.settings.WeTypeSettings
 import java.lang.ref.WeakReference
+import java.lang.reflect.Method
 import java.util.WeakHashMap
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -128,6 +129,8 @@ internal object WeTypeWindowHooks {
         var backgroundViewRoot: Any? = null,
         var transparentWindowBackground: Drawable? = null,
         val locationBuffer: IntArray = IntArray(2),
+        var inputViewMethodResolved: Boolean = false,
+        var inputViewMethod: Method? = null,
         var computedVisibleImeHeightPx: Int? = null,
         var bottomLeftHardwareCornerRadius: Float? = null,
         var bottomRightHardwareCornerRadius: Float? = null,
@@ -935,7 +938,7 @@ internal object WeTypeWindowHooks {
                 "onComputeInsets",
                 InputMethodService.Insets::class.java
             ).hookAfter { param ->
-                onComputeInsets(param.thisObject, param.args.getOrNull(0) as? InputMethodService.Insets)
+                onComputeInsets(param.thisObject, param.argumentOrNull(0) as? InputMethodService.Insets)
             }
             runCatching {
                 inputMethodService.getMethod("onWindowHidden").hookAfter { param ->
@@ -1082,7 +1085,7 @@ internal object WeTypeWindowHooks {
                         hideBackgroundCarrier(state)
                         return@runCatching true
                     }
-                    val bounds = collectBackgroundBounds(service, latestDecorView, state.locationBuffer)
+                    val bounds = collectBackgroundBounds(service, latestDecorView, state)
                     if (bounds == null) {
                         // Never display a stale/full-window estimate while the host relayouts.
                         hideBackgroundCarrier(state)
@@ -1170,12 +1173,23 @@ internal object WeTypeWindowHooks {
     private fun collectBackgroundBounds(
         inputMethodService: Any,
         decorView: View,
-        location: IntArray
+        state: WeTypeWindowState
     ): WeTypeBackgroundBounds? {
+        if (!state.inputViewMethodResolved) {
+            // Current WeType versions expose only the framework input/candidate frames.
+            // Cache a missing optional accessor too, instead of throwing on every layout.
+            state.inputViewMethod = runCatching {
+                inputMethodService.javaClass.findMethodInHierarchy {
+                    name == "getInputView" && parameterCount == 0 && View::class.java.isAssignableFrom(returnType)
+                }
+            }.getOrNull()
+            state.inputViewMethodResolved = true
+        }
+        val location = state.locationBuffer
         val contentViews = listOfNotNull(
             readViewField(inputMethodService, "mCandidatesFrame"),
             readViewField(inputMethodService, "mInputFrame"),
-            runCatching { inputMethodService.invokeMethodAs<View>("getInputView") }.getOrNull()
+            runCatching { state.inputViewMethod?.invoke(inputMethodService) as? View }.getOrNull()
         )
         return resolveWeTypeBackgroundBounds(
             decorView.toBackgroundLayout(location),
@@ -1352,8 +1366,13 @@ internal object WeTypeWindowHooks {
     private fun hideBackgroundCarrier(state: WeTypeWindowState) {
         val carrier = state.backgroundCarrier ?: return
         carrier.visibility = View.INVISIBLE
-        state.hyperMaterial?.clear()
-        state.backgroundStyle = null
+        if (state.backgroundStyle?.hyperMaterialEnabled == true) {
+            state.hyperMaterial?.clear()
+            state.backgroundStyle = null
+        }
+        // Retain the ordinary blur/bloom paths across hide/show. Recheck the ViewRoot
+        // before reuse because its blur drawable belongs to that window attachment.
+        state.backgroundStyleDirty = true
     }
 
     private fun removeBackgroundCarrier(state: WeTypeWindowState) {

@@ -296,49 +296,23 @@ fun Array<Class<*>>.sameAs(vararg types: Class<*>): Boolean {
     }
 }
 
-private object StaticHookThisObject
-
-class MethodHookParam internal constructor(
-    val method: Method,
-    thisObject: Any?,
-    args: Array<Any?>,
-    result: Any? = null
-) {
-    /**
-     * Existing call sites treat the hooked receiver as non-null. Keep that source shape for
-     * instance hooks; static hooks receive an internal sentinel and ignore this field.
-     */
-    val thisObject: Any = thisObject ?: StaticHookThisObject
-
-    var args: Array<Any?> = args
-
-    var result: Any? = result
-        set(value) {
-            field = value
-            resultWasSet = true
-        }
-
-    internal var resultWasSet: Boolean = false
-}
-
 fun Method.hookBefore(callback: (MethodHookParam) -> Unit) {
     val method = this
     HookEnvironment.registerHook(method, "before") { chain ->
         val param = MethodHookParam(
             method = method,
             thisObject = chain.thisObject,
-            args = chain.args.toTypedArray()
+            originalArgs = chain.args
         )
         val callbackResult = runCatching { callback(param) }
         val callbackFailure = callbackResult.exceptionOrNull()
         if (callbackFailure != null) {
             Log.e(callbackFailure)
-            chain.proceed(param.args)
         } else if (param.resultWasSet) {
-            param.result
-        } else {
-            chain.proceed(param.args)
+            return@registerHook param.result
         }
+        val changedArgs = param.changedArgs
+        if (changedArgs == null) chain.proceed() else chain.proceed(changedArgs)
     }
 }
 
@@ -349,7 +323,7 @@ fun Method.hookAfter(callback: (MethodHookParam) -> Unit) {
         val param = MethodHookParam(
             method = method,
             thisObject = chain.thisObject,
-            args = chain.args.toTypedArray(),
+            originalArgs = chain.args,
             result = originalResult
         )
         try {
@@ -368,11 +342,12 @@ fun Method.hookReplace(callback: (MethodHookParam) -> Any?) {
         val param = MethodHookParam(
             method = method,
             thisObject = chain.thisObject,
-            args = chain.args.toTypedArray()
+            originalArgs = chain.args
         )
         runCatching { callback(param) }.getOrElse { throwable ->
             Log.e(throwable)
-            chain.proceed(param.args)
+            val changedArgs = param.changedArgs
+            if (changedArgs == null) chain.proceed() else chain.proceed(changedArgs)
         }
     }
 }
