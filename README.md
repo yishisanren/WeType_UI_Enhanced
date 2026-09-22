@@ -1,3 +1,7 @@
+> **ColorOS 实验分支：** 面向 ColorOS 17 / 16 新增系统磨砂背景与安全回退。
+> 当前版本 `1.28.0-coloros.1-test`，尚待真机调试，暂不包含 ColorOS 原生凝光折射。
+> [适配范围、构建与启用说明](docs/coloros-material.md)。下文为保留的上游介绍。
+
 <div align="center">
 <img src="./assets/icon.png" width="120px"/>
 

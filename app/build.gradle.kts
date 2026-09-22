@@ -13,12 +13,17 @@ android {
         applicationId = "com.xposed.wetypehook"
         minSdk = 31
         targetSdk = 37
-        versionCode = 35
-        versionName = "1.28.0"
+        versionCode = 36
+        versionName = "1.28.0-coloros.1-test"
     }
 
     buildTypes {
         release {
+            // Opt-in local test certificate; production builds remain unsigned.
+            // The upstream maintainer's private signing key is not part of this fork.
+            if (providers.gradleProperty("colorosTestSigning").orNull == "true") {
+                signingConfig = signingConfigs.getByName("debug")
+            }
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles("proguard-rules.pro")

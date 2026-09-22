@@ -88,6 +88,8 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
 import com.kyant.capsule.ContinuousRoundedRectangle
 import com.xposed.wetypehook.wetype.graphics.WeTypeHyperMaterial
+import com.xposed.wetypehook.wetype.graphics.WeTypeMaterialEnvironment
+import com.xposed.wetypehook.wetype.graphics.ColorOsMaterialPolicy
 import com.xposed.wetypehook.wetype.graphics.WeTypeBloomStrokeDrawable
 import com.xposed.wetypehook.wetype.graphics.WeTypeCornerRadii
 import com.xposed.wetypehook.wetype.graphics.createWeTypeContinuousRoundedPath
@@ -441,7 +443,8 @@ private fun WeTypeSettingsScreen(
     val glassInput = rememberSaveable(
         saver = listSaver(save = { it.toList() }, restore = { mutableStateListOf(*it.toTypedArray()) })
     ) { mutableStateListOf(*GlassOverrideField.entries.map { snapshot.glassOverrides.text(it) }.toTypedArray()) }
-    val glassSupported = remember { WeTypeHyperMaterial.areGlassOverridesAvailable() }
+    val isColorOs = remember { WeTypeMaterialEnvironment.isColorOs }
+    val glassSupported = remember { !isColorOs && WeTypeHyperMaterial.areGlassOverridesAvailable() }
     val parsedGlassOverrides = runCatching {
         GlassMaterialOverrides.parse(GlassOverrideField.entries.associateWith { glassInput[it.ordinal] })
     }.getOrNull()
@@ -453,11 +456,11 @@ private fun WeTypeSettingsScreen(
     }
     var hyperMaterialEnabled by rememberSaveable { mutableStateOf(snapshot.hyperMaterialEnabled) }
     var hyperMaterialAvailable by remember(preferencesContext) {
-        mutableStateOf(WeTypeHyperMaterial.isAvailable(preferencesContext))
+        mutableStateOf(WeTypeMaterialEnvironment.isAvailable(preferencesContext))
     }
     DisposableEffect(preferencesContext) {
-        val stopObserving = WeTypeHyperMaterial.observeAvailability(preferencesContext) {
-            hyperMaterialAvailable = WeTypeHyperMaterial.isAvailable(preferencesContext)
+        val stopObserving = WeTypeMaterialEnvironment.observeAvailability(preferencesContext) {
+            hyperMaterialAvailable = WeTypeMaterialEnvironment.isAvailable(preferencesContext)
         }
         onDispose { stopObserving() }
     }
@@ -797,16 +800,19 @@ private fun WeTypeSettingsScreen(
                 ) {
                     Column {
                         MiuixSwitchWidget(
-                            title = stringResource(R.string.settings_hyper_material_title),
+                            title = stringResource(if (isColorOs) R.string.settings_coloros_material_title else R.string.settings_hyper_material_title),
                             description = stringResource(
-                                if (hyperMaterialAvailable) R.string.settings_hyper_material_desc
+                                if (isColorOs) {
+                                    if (hyperMaterialAvailable) R.string.settings_coloros_material_desc
+                                    else R.string.settings_coloros_material_unavailable
+                                } else if (hyperMaterialAvailable) R.string.settings_hyper_material_desc
                                 else R.string.settings_hyper_material_unavailable
                             ),
                             checked = hyperMaterialEnabled,
-                            enabled = hyperMaterialAvailable,
+                            enabled = isColorOs || hyperMaterialAvailable || hyperMaterialEnabled,
                             onCheckedChange = { hyperMaterialEnabled = it }
                         )
-                        if (hyperMaterialEnabled) {
+                        if (hyperMaterialEnabled && !isColorOs) {
                             HorizontalDivider()
                             GlassOverrideEditor(
                                 values = glassInput,
@@ -820,7 +826,7 @@ private fun WeTypeSettingsScreen(
                         }
                         HorizontalDivider()
                         MiuixSwitchWidget(
-                            enabled = !hyperMaterialEnabled,
+                            enabled = !hyperMaterialEnabled || isColorOs,
                             title = stringResource(R.string.settings_edge_highlight_title),
                             description = stringResource(R.string.settings_edge_highlight_desc),
                             checked = edgeHighlightEnabled,
@@ -830,7 +836,7 @@ private fun WeTypeSettingsScreen(
                         if (edgeHighlightEnabled) {
                             SliderPreferenceItem(
                                 title = stringResource(R.string.settings_edge_highlight_intensity_title),
-                                enabled = !hyperMaterialEnabled,
+                                enabled = !hyperMaterialEnabled || isColorOs,
                                 value = edgeHighlightIntensity,
                                 max = 200,
                                 onValueChange = { edgeHighlightIntensity = it }
@@ -842,7 +848,7 @@ private fun WeTypeSettingsScreen(
                         // 模糊滑块
                         SliderPreferenceItem(
                             title = stringResource(R.string.settings_blur_title),
-                            enabled = !hyperMaterialEnabled,
+                            enabled = !hyperMaterialEnabled || isColorOs,
                             value = blurRadius,
                             max = 100,
                             onValueChange = { blurRadius = it }
@@ -1083,7 +1089,19 @@ private fun PreviewCard(
     isDark: Boolean
 ) {
     val context = LocalContext.current
-    val displayColor = if (hyperMaterialEnabled && glassOverrides.glass == null) WeTypeHyperMaterial.fallbackColor(isDark) else color
+    val colorOsMaterial = hyperMaterialEnabled && WeTypeMaterialEnvironment.isColorOs
+    var blurAvailable by remember(context) { mutableStateOf(WeTypeMaterialEnvironment.isBlurEnabled(context)) }
+    DisposableEffect(context) {
+        val stop = WeTypeMaterialEnvironment.observeAvailability(context) {
+            blurAvailable = WeTypeMaterialEnvironment.isBlurEnabled(context)
+        }
+        onDispose { stop() }
+    }
+    val displayColor = when {
+        colorOsMaterial && !blurAvailable -> ColorOsMaterialPolicy.opaqueTint(color, isDark)
+        hyperMaterialEnabled && !colorOsMaterial && glassOverrides.glass == null -> WeTypeHyperMaterial.fallbackColor(isDark)
+        else -> color
+    }
     val weTypeFontFamily = remember(context) {
         FontFamily(
             Font(
@@ -1119,13 +1137,13 @@ private fun PreviewCard(
                     .weTypePreviewBloom(
                         color = color,
                         cornerRadius = previewCorner,
-                        edgeHighlightEnabled = edgeHighlightEnabled && !hyperMaterialEnabled,
+                        edgeHighlightEnabled = edgeHighlightEnabled && (!hyperMaterialEnabled || colorOsMaterial),
                         edgeHighlightIntensity = edgeHighlightIntensity,
                         isDark = isDark
                     )
                     .clip(previewShape)
             ) {
-                if (hyperMaterialEnabled) {
+                if (hyperMaterialEnabled && !colorOsMaterial) {
                     HyperMaterialPreview(
                         overrides = glassOverrides,
                         tintColor = color,
@@ -1140,12 +1158,12 @@ private fun PreviewCard(
                         contentScale = ContentScale.Crop,
                         modifier = Modifier
                             .matchParentSize()
-                            .blur((blurRadius / 3f).coerceAtLeast(0f).dp)
+                            .blur((if (colorOsMaterial && !blurAvailable) 0f else blurRadius / 3f).coerceAtLeast(0f).dp)
                     )
                     Box(
                         modifier = Modifier
                             .matchParentSize()
-                            .background(ComposeColor(color))
+                            .background(ComposeColor(displayColor))
                     )
                 }
                 Row(
@@ -1171,7 +1189,8 @@ private fun PreviewCard(
                                     .padding(horizontal = 14.dp, vertical = 8.dp)
                             ) {
                                 Text(
-                                    text = if (hyperMaterialEnabled) stringResource(R.string.settings_hyper_material_preview) else formatArgb(color),
+                                    text = if (colorOsMaterial) stringResource(R.string.settings_coloros_material_preview)
+                                        else if (hyperMaterialEnabled) stringResource(R.string.settings_hyper_material_preview) else formatArgb(color),
                                     color = previewTextColor(displayColor),
                                     style = MiuixTheme.textStyles.headline1,
                                     fontFamily = weTypeFontFamily
@@ -1196,7 +1215,9 @@ private fun PreviewCard(
                         }
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = if (hyperMaterialEnabled) {
+                            text = if (colorOsMaterial) {
+                                stringResource(R.string.settings_coloros_preview_note)
+                            } else if (hyperMaterialEnabled) {
                                 "${stringResource(R.string.settings_corner_label)} $cornerRadius"
                             } else {
                                 "${stringResource(R.string.settings_blur_label)} $blurRadius · ${stringResource(R.string.settings_corner_label)} $cornerRadius"

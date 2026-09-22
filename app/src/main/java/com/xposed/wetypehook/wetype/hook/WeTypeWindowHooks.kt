@@ -30,6 +30,8 @@ import com.xposed.wetypehook.xposed.hookBefore
 import com.xposed.wetypehook.xposed.invokeMethodAs
 import com.xposed.wetypehook.xposed.loadClassOrNull
 import com.xposed.wetypehook.wetype.graphics.WeTypeHyperMaterial
+import com.xposed.wetypehook.wetype.graphics.WeTypeColorOsMaterial
+import com.xposed.wetypehook.wetype.graphics.WeTypeMaterialEnvironment
 import com.xposed.wetypehook.wetype.graphics.WeTypeBloomStrokeDrawable
 import com.xposed.wetypehook.wetype.graphics.WeTypeCornerRadii
 import com.xposed.wetypehook.wetype.graphics.createWeTypeContinuousRoundedPath
@@ -116,6 +118,7 @@ internal object WeTypeWindowHooks {
         var backgroundCarrier: View? = null,
         var carrierOverrides: GlassMaterialOverrides = GlassMaterialOverrides(),
         var hyperMaterial: WeTypeHyperMaterial? = null,
+        var colorOsMaterial: WeTypeColorOsMaterial? = null,
         var stopMaterialObserver: (() -> Unit)? = null,
         var window: WeakReference<Window>? = null,
         var resourceReconcilePending: Boolean = false,
@@ -1051,7 +1054,7 @@ internal object WeTypeWindowHooks {
         state.window = WeakReference(window)
         if (state.stopMaterialObserver == null) {
             val serviceReference = WeakReference(inputMethodService)
-            state.stopMaterialObserver = WeTypeHyperMaterial.observeAvailability(decorView.context) {
+            state.stopMaterialObserver = WeTypeMaterialEnvironment.observeAvailability(decorView.context) {
                 serviceReference.get()?.let { scheduleWindowBlur(it) }
             }
         }
@@ -1242,7 +1245,7 @@ internal object WeTypeWindowHooks {
             }
         }
 
-        val overrides = if (settings.hyperMaterialEnabled && WeTypeHyperMaterial.areGlassOverridesAvailable()) {
+        val overrides = if (settings.hyperMaterialEnabled && !WeTypeMaterialEnvironment.isColorOs && WeTypeHyperMaterial.areGlassOverridesAvailable()) {
             settings.glassOverrides
         } else GlassMaterialOverrides()
         val carrier = ensureBackgroundCarrier(context, decorGroup, state, overrides)
@@ -1257,7 +1260,7 @@ internal object WeTypeWindowHooks {
             nightMode = context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK,
             density = context.resources.displayMetrics.density,
             hyperMaterialEnabled = settings.hyperMaterialEnabled,
-            hyperMaterialAvailable = WeTypeHyperMaterial.isAvailable(context)
+            hyperMaterialAvailable = WeTypeMaterialEnvironment.isAvailable(context)
         )
         val viewRoot = if (state.backgroundStyleDirty || carrier.background == null) {
             runCatching { carrier.invokeMethodAs<Any>("getViewRootImpl") }.getOrNull()
@@ -1267,7 +1270,14 @@ internal object WeTypeWindowHooks {
         if (carrier.background == null || state.backgroundStyle != style || state.backgroundViewRoot !== viewRoot) {
             applyContinuousCornerOutline(carrier, cornerRadii)
             val material = checkNotNull(state.hyperMaterial)
-            if (style.hyperMaterialEnabled) {
+            if (style.hyperMaterialEnabled && WeTypeMaterialEnvironment.isColorOs) {
+                material.clear()
+                checkNotNull(state.colorOsMaterial).apply(
+                    style.color, style.blurRadius, cornerRadii,
+                    style.nightMode == Configuration.UI_MODE_NIGHT_YES,
+                    style.edgeHighlightEnabled, style.edgeHighlightIntensity
+                )
+            } else if (style.hyperMaterialEnabled) {
                 // Remove the old blur/bloom drawable before enabling the system material.
                 carrier.background = Color.TRANSPARENT.toDrawable()
                 if (!material.apply(style.nightMode == Configuration.UI_MODE_NIGHT_YES, style.color)) {
@@ -1275,6 +1285,7 @@ internal object WeTypeWindowHooks {
                     carrier.background = createTintDrawable(WeTypeHyperMaterial.fallbackColor(style.nightMode == Configuration.UI_MODE_NIGHT_YES), cornerRadii)
                 }
             } else {
+                state.colorOsMaterial?.clear()
                 material.clear()
                 carrier.background = createBackgroundDrawable(carrier, context, style)
             }
@@ -1292,7 +1303,7 @@ internal object WeTypeWindowHooks {
             carrier.layout(0, bounds.top, decorView.width, bounds.top + backgroundHeight)
             carrier.invalidateOutline()
         }
-        if (style.hyperMaterialEnabled) state.hyperMaterial?.updateGeometry(cornerRadii)
+        if (style.hyperMaterialEnabled && !WeTypeMaterialEnvironment.isColorOs) state.hyperMaterial?.updateGeometry(cornerRadii)
     }
 
     private fun ensureBackgroundCarrier(
@@ -1306,6 +1317,7 @@ internal object WeTypeWindowHooks {
 
         state.backgroundCarrier?.let { oldCarrier ->
             state.hyperMaterial?.clear()
+            state.colorOsMaterial?.clear()
             (oldCarrier.parent as? ViewGroup)?.removeView(oldCarrier)
             state.backgroundStyle = null
             state.backgroundViewRoot = null
@@ -1326,6 +1338,7 @@ internal object WeTypeWindowHooks {
         // A fresh RenderNode restores actual ROM defaults when an override is cleared.
         state.carrierOverrides = overrides
         state.hyperMaterial = WeTypeHyperMaterial(carrier, overrides)
+        state.colorOsMaterial = if (WeTypeMaterialEnvironment.isColorOs) WeTypeColorOsMaterial(carrier) else null
         return carrier
     }
 
@@ -1368,6 +1381,7 @@ internal object WeTypeWindowHooks {
         carrier.visibility = View.INVISIBLE
         if (state.backgroundStyle?.hyperMaterialEnabled == true) {
             state.hyperMaterial?.clear()
+            state.colorOsMaterial?.clear()
             state.backgroundStyle = null
         }
         // Retain the ordinary blur/bloom paths across hide/show. Recheck the ViewRoot
@@ -1380,6 +1394,8 @@ internal object WeTypeWindowHooks {
         state.stopMaterialObserver = null
         state.hyperMaterial?.clear()
         state.hyperMaterial = null
+        state.colorOsMaterial?.clear()
+        state.colorOsMaterial = null
         val carrier = state.backgroundCarrier ?: return
         (carrier.parent as? ViewGroup)?.removeView(carrier)
         state.backgroundCarrier = null
