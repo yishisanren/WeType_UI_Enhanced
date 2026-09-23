@@ -136,8 +136,8 @@
     <string name="settings_glass_lighten_angle">提亮角域</string>
     <string name="settings_glass_highlight_parameter">高光 · %1$s</string>
     <string name="settings_glass_reset_desc">恢复默认的玻璃、磨砂和高光参数。</string>
-    <string name="settings_coloros_material_title">ColorOS 磨砂材质（实验）</string>
-    <string name="settings_coloros_material_desc">使用系统背景模糊，保留自定义配色、圆角和高光。面向 ColorOS 17 / 16，暂不包含原生凝光折射，待真机验证。</string>
+    <string name="settings_coloros_material_title">ColorOS 原生材质（实验）</string>
+    <string name="settings_coloros_material_desc">尝试在系统模糊上加入原生混色、描边和阴影，保留配色与圆角；不支持时回退。尚不包含完整凝光折射。</string>
     <string name="settings_coloros_material_unavailable">系统模糊当前不可用，键盘使用不透明背景保证可读性；恢复可用后自动启用模糊。</string>
     <string name="settings_coloros_material_preview">ColorOS</string>
     <string name="settings_coloros_preview_note">配色示意 · 实际键盘效果待真机验证</string>

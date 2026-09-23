@@ -20,6 +20,7 @@ internal object ColorOsMaterialPolicy {
 
 /** Strict binding of the AOSP/OPlus blur drawable contract; no optional glass calls. */
 internal class ColorOsBlurHandle(private val target: Any, val drawable: Any) {
+    private var materialFailed = false
     private val radiusMethod = target.javaClass.getMethod("setBlurRadius", Int::class.javaPrimitiveType)
     private val colorMethod = target.javaClass.getMethod("setColor", Int::class.javaPrimitiveType)
     private val cornersMethod = target.javaClass.getMethod(
@@ -33,6 +34,22 @@ internal class ColorOsBlurHandle(private val target: Any, val drawable: Any) {
         cornersMethod.invoke(target, corners.topLeft, corners.topRight, corners.bottomLeft, corners.bottomRight)
         colorMethod.invoke(target, 0)
         radiusMethod.invoke(target, ColorOsMaterialPolicy.blurRadius(radius))
+    }
+
+    fun configureMaterial(color: Int): Boolean {
+        if (materialFailed) return false
+        return runCatching {
+            val type = Class.forName("com.oplus.graphics.OplusBlurParam", false, target.javaClass.classLoader)
+            val setter = target.javaClass.getMethod("setBlurParams", type)
+            val params = type.getConstructor().newInstance()
+            // A subtle native color mix underneath the existing tint preserves readability.
+            type.getMethod("setMaterialParams", Int::class.javaPrimitiveType,
+                FloatArray::class.java, FloatArray::class.java).invoke(params,
+                type.getField("BLUR_BLEND_MODE_COLORMIX").getInt(null),
+                ColorOsNativeStyle.rgba(color, 0.12f), FloatArray(4))
+            setter.invoke(target, params)
+            true
+        }.getOrElse { materialFailed = true; false }
     }
 
     fun clear() { radiusMethod.invoke(target, 0) }

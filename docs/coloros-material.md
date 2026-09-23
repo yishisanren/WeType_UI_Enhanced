@@ -1,41 +1,29 @@
-# ColorOS 16 / 17 磨砂材质实验版
+# ColorOS 原生材质实验版
 
-版本：`1.28.0-coloros.1-test`。上游基线：`3661a65f90d52e64f96285bc13a3faa92547ee67`。
+当前版本：`1.28.0-coloros.2-test`。上游基线：`3661a65f90d52e64f96285bc13a3faa92547ee67`。
 
-2026-09-23 更新：已完成一台 ColorOS 17 设备的单场景视觉检查，确认磨砂、圆角与模块高光可见；原生凝光仍未实现。实机发现的私有接口和服务限制见[首次实机检查](coloros-device-validation.md)。下文保留首版交付时的设计依据与离线验证范围。
+本分支为微信输入法增加系统磨砂背景，并在接口可用时使用 OPlus 原生混色、边缘高光与阴影。2026-09-23 已在一台 ColorOS 17 设备完成开关对照、收起展开、输入法切换及进程重启验证。**完整凝光折射和触摸光学反馈未实现；ColorOS 16 仍属于未实测的兼容目标。**
 
-## 当前交付范围
+## 依据与边界
 
-这是微信输入法 Xposed 美化模块的 ColorOS 兼容分支。新增 ColorOS 系统背景模糊通道、可读性回退、动态模糊开关监听和独立的材质生命周期管理。目标为 ColorOS 17，兼顾 ColorOS 16；首版发布时尚未做物理设备验证，不声明所有机型或 ROM 小版本兼容。
+- [ColorOS 17 官方说明](https://www.coloros.com/version/coloros17/)及 [ColorOS 16 官方说明](https://www.oppo.com/en/coloros16/)提供视觉方向，不能当作输入法可调用的公开 SDK。首版没有套用小米的玻璃参数。
+- [Android 官方跨窗口模糊指南](https://source.android.com/docs/core/display/window-blurs)用于确定模糊作用域、运行时状态监听和关闭模糊后的可读性回退。
+- [AOSP BackgroundBlurDrawable 源码](https://github.com/aosp-mirror/platform_frameworks_base/blob/99b01a65cc4c104933788b3143285ab6bae65827/core/java/com/android/internal/graphics/drawable/BackgroundBlurDrawable.java)用于内部模糊 Drawable 的可失败适配；OEM 可以修改其实现。
+- 第二版的 OPlus 方法签名与使用条件来自当前设备框架和系统 COUI 组件的静态检查，并经过本机运行验证。这些是私有接口，不构成其他 ROM 的兼容承诺。系统文件和反编译内容仅用于本地检查，不随项目分发。
+- SystemUI 中另有依赖签名权限的独立后处理服务。本版没有调用该服务，没有更改系统权限或扩大 Xposed 作用域。不能把已接通的混色、描边称为完整凝光折射。
 
-**本版实现磨砂背景，不包含 ColorOS 17 原生“凝光”的折射/触摸反馈。** OPPO 官方产品说明展示了凝光设计，但截至本次查阅，没有核实到输入法可调用的公开凝光 SDK、类名、方法签名或参数规范。不能把小米的 `setMiGlass(float[])` 参数直接移植或改名为 ColorOS 参数。真机调试阶段需要确认设备框架暴露的实际能力，再决定是否扩展。
+## 实现与回退
 
-## 依据与证据边界
+- 按 OPlus ROM 属性识别系统。其他系统继续使用上游路径；ColorOS 不调用小米玻璃方法。
+- 背景模糊优先使用 `ViewRootManager`，不可用时尝试 AOSP `ViewRootImpl` 通道。只在真实键盘背景区域绘制，沿用运行时尺寸、导航栏 inset 与四角计算。
+- 可选 `OplusBlurParam` 使用原生颜色混合。参数为本项目调校，并非 OPPO 官方材质 token。
+- 高光开启且模糊可用时，探测 `OplusMaterialUtil` 的 corner、edge、shadow、base 参数，以及 RenderNode 背景效果通道。两层仅用于装饰的 View 分别裁切上下半区，保留顶部用户圆角与底部系统圆角；不参与输入交互或撑高布局。
+- 原生圆角使用当前系统提供的平滑权重，尺寸取自实际 View。私有接口缺失、调用失败、硬件绘制不可用或系统关闭相应效果时，恢复普通 tint 和模块高光。
+- 系统关闭跨窗口模糊时，恢复不透明的浅/深色可读背景。模糊半径为 0 时尊重用户的纯色/透明选择。
+- 键盘隐藏、销毁、材质关闭或背景 View 更换时释放模糊对象和原生装饰；系统模糊监听随输入法可见生命周期注册和注销。
+- 设置页预览仍是配色示意，不是系统材质的实时预览。实际效果以弹出的键盘为准。
 
-| 来源 | 本版采用的内容 | 不能据此证明的内容 |
-| --- | --- | --- |
-| [ColorOS 17 官方说明](https://www.coloros.com/version/coloros17/) | 通透、清晰可读的凝光设计方向 | 没有在该页面看到可调用的凝光 API |
-| [ColorOS 16 官方说明](https://www.oppo.com/en/coloros16/) | 系统视觉与渲染的产品背景 | 不能从宣传效果推断输入法接口或 ROM 参数 |
-| [Android 官方跨窗口模糊指南](https://source.android.com/docs/core/display/window-blurs) | 背景模糊的作用域、透明背景、运行时关闭模糊时的可读性回退 | 无法证明某台 ColorOS 设备开启此能力 |
-| [Android WindowManager API](https://developer.android.com/reference/android/view/WindowManager#addCrossWindowBlurEnabledListener(java.util.function.Consumer%3Cjava.lang.Boolean%3E)) | 查询并监听跨窗口模糊状态、注销监听 | 不提供 ColorOS 凝光折射 |
-| [AOSP Android 16 BackgroundBlurDrawable 源码](https://github.com/aosp-mirror/platform_frameworks_base/blob/99b01a65cc4c104933788b3143285ab6bae65827/core/java/com/android/internal/graphics/drawable/BackgroundBlurDrawable.java) | 键盘区域的系统模糊 Drawable；四角调用顺序为 TL、TR、BL、BR；半径归零与隐藏用于释放模糊区域 | 属于内部 API，OEM 可以修改，必须运行时探测 |
-| [OPlus 兼容层中的 ViewRootManager 接口形状](https://github.com/yaap/hardware_oplus/blob/6d726d44eac52d6ef09060c11c05a1c689a9dd32/oplus-fwk/src/com/oplus/view/ViewRootManager.java) | 可选探测 `View` 构造器、取 Drawable、设置模糊半径、颜色及四角签名 | 这是社区兼容桩，不是 OPPO 官方文档或 ColorOS 16/17 实测证据；没有采用其中无实现的 `setBlurParams` |
-
-官方文档和公开源码指导了本版的行为；OPlus 包装类只作为可失败的实验通道。它的签名存在也不能证明系统实际绘制出了效果。
-
-## 实现
-
-- 按 `ro.build.version.oplusrom` / `ro.build.version.opporom` 识别 OPlus ROM。版本字符串不作为“已兼容”的证据；其他系统保留上游路径。
-- “外观”中的高级材质开关在 ColorOS 上显示为“ColorOS 磨砂材质（实验）”。沿用已有开关存储，默认关闭，不重置原配色与玻璃参数。
-- 优先探测 OPlus `ViewRootManager`；缺少完整签名、返回空 Drawable 或调用失败，尝试 AOSP `ViewRootImpl.createBackgroundBlurDrawable()`。所有调用仅作用于微信输入法自己的背景 View。
-- 在真实键盘背景区域绘制，不对整屏调用 `FLAG_BLUR_BEHIND`；沿用上游的输入法可见区域与实时导航栏/硬件圆角计算，不固定设备尺寸。
-- 两条通道均不可用，或系统关闭跨窗口模糊时，将用户 tint 合成在不透明的浅/深中性色上。恢复系统模糊后自动重建；用户设置模糊半径为 0 且系统模糊可用时尊重其纯色/透明选择。
-- 每个当前 ViewRoot 仅保留一个原生模糊对象；样式变化复用。键盘隐藏、销毁、ViewRoot 更换或材质关闭时将半径归零、隐藏 Drawable 并解除引用；系统监听在输入法隐藏/销毁时注销。
-- 配色、模糊强度、圆角、已有边缘高光仍可调整。中性色及高光属于模块效果，不是 OPPO 官方材质 token。
-- 小米玻璃数组编辑器在 ColorOS 隐藏；不调用 `setMiGlass`、`setMiViewMaterialType` 或推测的 OPlus 折射函数。
-- 设置页预览为本地图片配色示意，明确标注“实际键盘效果待真机验证”。它不代表跨窗口渲染已经通过。
-
-## 构建和签名
+## 构建与安装
 
 需要 JDK 21、Android SDK 37 和仓库自带的 Gradle wrapper。
 
@@ -43,26 +31,19 @@
 ./gradlew :app:testDebugUnitTest :app:lintRelease :app:assembleRelease -PcolorosTestSigning=true
 ```
 
-`colorosTestSigning=true` 明确为 Release 构建启用本机 Android debug 测试证书。不开此参数时沿用上游的未签名 Release 构建。测试包仍经过 Release 混淆和资源压缩；不会在仓库中保存任何签名密钥或密码。生成结果位于 `app/build/outputs/apk/release/`。
+`colorosTestSigning=true` 为 Release 构建使用本机 Android debug 测试证书，仍执行 Release 混淆与资源压缩。不传该参数时沿用上游未签名 Release 构建。密钥和密码不进入仓库。
 
-包名仍为 `com.xposed.wetypehook`，测试证书与上游作者签名不同。已有上游版本时，是否允许覆盖取决于设备环境；若安装提示签名不兼容，保留旧应用与设置，先核对情况，不自动卸载。仓库 `AGENTS.md` 中的作者专用密钥路径在本机不存在；本轮未执行任何真机安装或验证。
+作者专用密钥在本机不存在；本次按已确认的测试签名方案构建。第二版与首个 ColorOS 测试包证书相同，包名保持 `com.xposed.wetypehook`。覆盖安装失败时保留应用与设置，不能自动卸载。
 
 ## 启用
 
-1. 安装本测试包，并在支持 Xposed API 102 的 LSPosed/兼容框架中启用模块，作用域选择微信输入法。
-2. 重启微信输入法进程，在其“关于”页点击 Logo 进入模块设置。
-3. 在“外观”打开“ColorOS 磨砂材质（实验）”，保存。
-4. 模糊强度、圆角和高光使用同组现有选项，浅深色背景在“颜色”中设置。
+1. 安装测试包，在支持 Xposed API 102 的框架中启用模块，作用域选择微信输入法。
+2. 重新启动微信输入法进程，确认当前默认输入法仍是微信输入法。当前实测 ColorOS 在强制停止它后会自动切换到搜狗，需要通过系统键盘选择器切回。
+3. 打开模块设置，在“外观”启用“ColorOS 原生材质（实验）”，保存。
+4. 打开“开启边缘高光效果”启用可用的原生描边和阴影；关闭它仍保留背景模糊与原生混色。沿用原有颜色、透明度、模糊、圆角和高光强度设置。
 
-## 真机调试验收
+遇到视觉问题可关闭原生材质开关并保存，恢复普通美化路径。不要为了该效果重启系统框架或强改系统权限。
 
-本次按用户要求只完成离线构建与逻辑检查；下列项目待拿到设备后执行：
+## 验证范围
 
-- 核对手机型号、完整 ROM 版本、微信输入法版本、LSPosed API，以及安装签名和原设置备份。
-- 确认 ColorOS 材质入口和保存后重新进入的状态；确认没有小米玻璃参数入口。
-- 查看 `ColorOS material:` 日志，实际选中的通道可能是 `oplus`、`aosp`、`tint-only` 或 `opaque-fallback`。不记录输入文本、用户内容或账号数据。
-- 浅/深色、普通键盘/表情/剪贴板、横竖屏、输入法实际切换、反复弹出/收起、分屏和硬件键盘下检查背景范围与四角。
-- 在支持的设备上切换省电或窗口模糊状态，验证背景仍可读、恢复后重新模糊，且无残留模糊层。
-- 比对系统凝光元素，并只读检查真实框架接口。若没有可用的凝光接口，保持本版磨砂路径；不强开系统全局属性或编造兼容声明。
-
-具体构建、签名与测试结果见 [离线验证记录](coloros-validation.md)；最终文件校验值随测试版本的 `validation.md` 交付。
+当前设备、文件校验值、已通过场景与未测试项目见[第二版实机验证](coloros-native-validation.md)。首版证据分别保存在[离线验证](coloros-validation.md)与[首次实机检查](coloros-device-validation.md)。未测试的深色、横屏、分屏、表情/剪贴板面板、性能、耗电及其他 ROM，不以本次结果代替验证。

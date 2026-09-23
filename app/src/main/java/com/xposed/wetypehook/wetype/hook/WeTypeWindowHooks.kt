@@ -1304,6 +1304,7 @@ internal object WeTypeWindowHooks {
             carrier.invalidateOutline()
         }
         if (style.hyperMaterialEnabled && !WeTypeMaterialEnvironment.isColorOs) state.hyperMaterial?.updateGeometry(cornerRadii)
+        if (style.hyperMaterialEnabled && WeTypeMaterialEnvironment.isColorOs) state.colorOsMaterial?.updateGeometry()
     }
 
     private fun ensureBackgroundCarrier(

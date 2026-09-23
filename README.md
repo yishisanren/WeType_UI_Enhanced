@@ -1,5 +1,5 @@
-> **ColorOS 实验分支：** 面向 ColorOS 17 / 16 新增系统磨砂背景与安全回退。
-> 当前版本 `1.28.0-coloros.1-test`，已在一台 ColorOS 17 设备观察到基础磨砂效果；完整兼容性仍待验证，原生凝光尚未实现。见[首次实机检查](docs/coloros-device-validation.md)。
+> **ColorOS 实验分支：** 系统磨砂背景、可选 OPlus 原生混色、边缘高光与阴影。
+> 当前版本 [`1.28.0-coloros.2-test`](https://github.com/yishisanren/WeType_UI_Enhanced/releases/tag/v1.28.0-coloros.2-test)，已在一台 ColorOS 17 设备验证原生材质开关、收起展开和输入法切换。**不包含完整凝光折射，ColorOS 16 尚未实测。** 见[原生材质实机验证](docs/coloros-native-validation.md)。
 > [适配范围、构建与启用说明](docs/coloros-material.md)。下文为保留的上游介绍。
 
 <div align="center">

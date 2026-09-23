@@ -136,8 +136,8 @@
     <string name="settings_glass_lighten_angle">Brightening angle</string>
     <string name="settings_glass_highlight_parameter">Highlight · %1$s</string>
     <string name="settings_glass_reset_desc">Restore the default glass, frost, and highlight parameters.</string>
-    <string name="settings_coloros_material_title">ColorOS frosted material (experimental)</string>
-    <string name="settings_coloros_material_desc">System backdrop blur with your colors, corners and highlights. Targets ColorOS 17 / 16; native Condensed Light refraction is not included. Device validation pending.</string>
+    <string name="settings_coloros_material_title">ColorOS native material (experimental)</string>
+    <string name="settings_coloros_material_desc">Tries native color mixing, edge lighting and shading over system blur. Keeps your colors and corners; falls back when unsupported. Full Condensed Light refraction is not included.</string>
     <string name="settings_coloros_material_unavailable">System blur is currently unavailable. The keyboard uses an opaque background for readability and restores blur when available.</string>
     <string name="settings_coloros_material_preview">ColorOS</string>
     <string name="settings_coloros_preview_note">Color preview only · verify the keyboard on device</string>
