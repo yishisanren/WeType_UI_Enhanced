@@ -1,5 +1,5 @@
 > **ColorOS 实验分支：** 面向 ColorOS 17 / 16 新增系统磨砂背景与安全回退。
-> 当前版本 `1.28.0-coloros.1-test`，尚待真机调试，暂不包含 ColorOS 原生凝光折射。
+> 当前版本 `1.28.0-coloros.1-test`，已在一台 ColorOS 17 设备观察到基础磨砂效果；完整兼容性仍待验证，原生凝光尚未实现。见[首次实机检查](docs/coloros-device-validation.md)。
 > [适配范围、构建与启用说明](docs/coloros-material.md)。下文为保留的上游介绍。
 
 <div align="center">
